@@ -1,5 +1,6 @@
 using LinearAlgebra
-using Printf
+import QuanticsTCI
+import TensorCrossInterpolation
 
 struct QTTVector{T}
     cores::Vector{Array{T,3}}  # (rL, 2, rR)
@@ -125,49 +126,89 @@ function build_diagonal_qtt_from_vec_qtt(qtt::QTTVector{T}) where {T}
     return QTTMPO(cores)
 end
 
-function build_qtt_vec_from_dense(values::AbstractVector{<:Real}, c::Int; reltol::Float64=0.0, maxrank::Int=typemax(Int))
+function qtt_value_at_index(qtt::QTTVector{T}, idx::Int) where {T}
+    c = order(qtt)
     N = 1 << c
-    length(values) == N || throw(ArgumentError("values length must be 2^c"))
+    (1 <= idx <= N) || throw(ArgumentError("idx must be in 1:$N"))
 
-    dims = ntuple(_ -> 2, c)
-    # Convert to MSB-first tensor order, matching QTT core construction above.
-    Tmsb = permutedims(reshape(Float64.(values), dims), reverse(1:c))
+    idx0 = idx - 1
+    v = ones(T, 1)
+    @inbounds for k in 1:c
+        G = qtt.cores[k]
+        rL, _, rR = size(G)
+        length(v) == rL || throw(ArgumentError("rank mismatch at site $k"))
+        s = Int((idx0 >> (c - k)) & 0x1) + 1
+        nxt = zeros(T, rR)
+        for a in 1:rL, b in 1:rR
+            nxt[b] += v[a] * G[a, s, b]
+        end
+        v = nxt
+    end
+    return v[1]
+end
+
+function qttvector_from_tci_1d(tci_obj, c::Int)
+    tt = hasproperty(tci_obj, :tci) ? TensorCrossInterpolation.TensorTrain(getproperty(tci_obj, :tci)) :
+                                      TensorCrossInterpolation.TensorTrain(tci_obj)
+    # TCI may return TT with first core having rL>1; reverse ensures (1,2,r) structure
+    tt = TensorCrossInterpolation.reverse(tt)
+    tensors = collect(TensorCrossInterpolation.sitetensors(tt))
+    length(tensors) == c || throw(ArgumentError("unexpected TCI length: got $(length(tensors)), expected $c"))
 
     cores = Vector{Array{Float64,3}}(undef, c)
-    r_prev = 1
-    X = reshape(Tmsb, r_prev * 2, :)
-
-    @inbounds for k in 1:(c - 1)
-        F = svd(X; full=false)
-        U, S, Vt = F.U, F.S, F.Vt
-        r = min(length(S), maxrank)
-        if reltol > 0
-            thresh = reltol * S[1]
-            rr = 0
-            for i in 1:r
-                S[i] >= thresh || break
-                rr = i
-            end
-            r = max(rr, 1)
-        end
-
-        Utrunc = @view U[:, 1:r]
-        cores[k] = reshape(Array(Utrunc), r_prev, 2, r)
-
-        Vtrunc = @view Vt[1:r, :]
-        Xnext = Array(Vtrunc)
-        for i in 1:r
-            @views Xnext[i, :] .*= S[i]
-        end
-        X = Xnext
-        r_prev = r
-        if k < c - 1
-            X = reshape(X, r_prev * 2, :)
-        end
+    @inbounds for k in 1:c
+        G = Array(tensors[k])
+        ndims(G) == 3 || throw(ArgumentError("site tensor $k is not rank-3"))
+        size(G, 2) == 2 || throw(ArgumentError("site tensor $k has local dimension $(size(G, 2)); expected 2"))
+        cores[k] = Float64.(G)
     end
-
-    cores[c] = reshape(X, r_prev, 2, 1)
     return QTTVector(cores)
+end
+
+function orient_qtt_msb_first(qtt::QTTVector{Float64}, xvals::AbstractVector{<:Real}, f::Function)
+    c = order(qtt)
+    N = 1 << c
+    length(xvals) == N || throw(ArgumentError("xvals length must be 2^c"))
+
+    probe = unique(clamp.(Int[1, 2, 3, max(1, div(N, 2)), max(1, N - 2), N - 1, N], 1, N))
+    # Reverse cores with permutedims so bond structure stays (1,2,r) for first core
+    rev_cores = [permutedims(G, (3, 2, 1)) for G in reverse(qtt.cores)]
+    rev_qtt = QTTVector(rev_cores)
+    err_normal = 0.0
+    err_reversed = 0.0
+    @inbounds for i in probe
+        target = f(xvals[i])
+        err_normal += abs(qtt_value_at_index(qtt, i) - target)
+        err_reversed += abs(qtt_value_at_index(rev_qtt, i) - target)
+    end
+    return err_reversed < err_normal ? rev_qtt : qtt
+end
+
+function build_qtt_vec_exp_tci(
+    c::Int;
+    interval::Tuple{Float64,Float64}=(-50.0, 50.0),
+    tolerance::Float64=1e-10,
+    maxbonddim::Int=64,
+    maxiter::Int=100,
+)
+    a, b = interval
+    c >= 1 || throw(ArgumentError("c must be >= 1"))
+    b > a || throw(ArgumentError("interval must satisfy a < b"))
+    N = 1 << c
+    xvals = range(a, b; length=N)
+    f(x) = exp(-0.5 * x * x)
+
+    ci, _, _ = QuanticsTCI.quanticscrossinterpolate(
+        Float64,
+        f,
+        xvals;
+        tolerance=tolerance,
+        maxbonddim=maxbonddim,
+        maxiter=maxiter,
+    )
+
+    qtt = qttvector_from_tci_1d(ci, c)
+    return orient_qtt_msb_first(qtt, xvals, f)
 end
 
 function qtt_inner(u::QTTVector{Tu}, v::QTTVector{Tv}) where {Tu,Tv}
@@ -266,33 +307,28 @@ end
 
 Base.:+(A::QTTMPO, B::QTTMPO) = add_mpo(A, B)
 
-function print_energy_table(; c_start::Int=8, c_end::Int=12, interval::Tuple{Float64,Float64}=(-50.0, 50.0))
-    c_end >= c_start || throw(ArgumentError("c_end must be >= c_start"))
+function qtt(;
+    c::Int = 10,
+    x_min::Float64 = -50.0,
+    x_max::Float64 = 50.0,
+    tci_tolerance::Float64 = 1e-10,
+    tci_maxbonddim::Int = 64,
+    tci_maxiter::Int = 100,
+)
+    lower, main, upper, _ = kinetic_fd_coeffs(c, (x_min, x_max))
+    a1 = build_tridiag_toep(c, lower, main, upper)
+    a2 = build_diagonal_qtt_from_vec_qtt(qtt_quadratic_1d(c; interval=(x_min, x_max)))
+    a = a1 + a2
 
-    for c in c_start:c_end
-        t0 = time_ns()
+    phi_qtt = build_qtt_vec_exp_tci(
+        c;
+        interval=(x_min, x_max),
+        tolerance=tci_tolerance,
+        maxbonddim=tci_maxbonddim,
+        maxiter=tci_maxiter,
+    )
 
-        lower, main, upper, h = kinetic_fd_coeffs(c, interval)
-        a1 = build_tridiag_toep(c, lower, main, upper)
-        a2 = build_diagonal_qtt_from_vec_qtt(qtt_quadratic_1d(c; interval=interval))
-        a = a1 + a2
-
-        # Dense reference state -> exact QTT via TT-SVD.
-        x = range(interval[1], interval[2], length=(1 << c))
-        phi_dense = exp.(-0.5 .* (x .^ 2))
-        phi_qtt = build_qtt_vec_from_dense(phi_dense, c)
-
-        num = qtt_expectation_mpo(phi_qtt, a)
-        den = qtt_inner(phi_qtt, phi_qtt)
-        energy = real(num / den)
-        elapsed = (time_ns() - t0) * 1e-9
-
-        @printf("N=%d, h=%.6e, energy=%.12f t=%.5f secs\n", 1 << c, h, energy, elapsed)
-    end
+    num = qtt_expectation_mpo(phi_qtt, a)
+    den = qtt_inner(phi_qtt, phi_qtt)
+    return real(num / den)
 end
-
-# if abspath(PROGRAM_FILE) == @__FILE__
-#     print_energy_table()
-# end
-
-print_energy_table()
