@@ -1,4 +1,5 @@
-# Quantum1D
+# CompPhysHack 2026
+
 Benchmarks for the numerical approaches of one-dimensional quantum mechanical problems
 
 ## Hamiltonian
@@ -65,6 +66,8 @@ Calculation Time:
 ## How to Run
 
 ```sh
-julia --project=. --startup-file=no -e 'import Pkg; Pkg.instantiate()'
-julia --project=. --startup-file=no benchmark.jl
+git clone https://github.com/ohno/CompPhysHack2026Ohno.git
+cd CompPhysHack2026Ohno
+julia --project=./julia --startup-file=no -e 'import Pkg; Pkg.instantiate()'
+julia --project=./julia --startup-file=no benchmark.jl
 ```
