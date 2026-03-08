@@ -1,15 +1,16 @@
 # Self-Introduction
 
 ## About Me
+- 🗺 **Profile** — Shuhei Ohno, Yokohama → Wako
+- 🏫 **Affiliation** — RIKEN (junior research associate), Yokohama City University (PhD student)
+- 📝 **Field** — Few-Body Systems Physics
+- 👀 **Projects** — [JuliaFewBody](https://github.com/JuliaFewBody), [PkgFactory.jl](https://github.com/ohno/PkgFactory.jl), [Computational Physics Minisymposium](https://juliacon.org/2026/minisymposia/) in JuliaCon 2026.
 - 🐙 **GitHub / Zenn** — [ohno](https://github.com/ohno)
-- 🏫 **Affiliation** — RIKEN, Yokohama City University (PhD Student)
-- 📝 **Field** — Few-Body Systems Physics, Scientific Computing
-- 👀 **Current** — JuliaFewBody, PkgFactory.jl, Computational Physics Minisymposium in JuliaCon 2026.
 
 ## Hobby
 - ☕ **Tea** — 4+ years
 - 🎻 **Cello** — 12+ years
-- 🔬 **Numecital Calculation** — 13+ years, 10+ langs
+- 🔬 **Numerical Calculation** — 13+ years, 10+ langs
 - 💻 **Programming** — 17+ years
 
 Read more about [github.ohno](https://github.com/ohno)

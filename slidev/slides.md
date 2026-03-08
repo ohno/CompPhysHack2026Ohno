@@ -50,3 +50,7 @@ src: ./pages/introduction.md
 ---
 src: ./pages/main.md
 ---
+
+---
+src: ./pages/appendix.md
+---
