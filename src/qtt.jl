@@ -307,6 +307,14 @@ end
 
 Base.:+(A::QTTMPO, B::QTTMPO) = add_mpo(A, B)
 
+
+function H_qtt(c, x_min, x_max)
+    lower, main, upper, _ = kinetic_fd_coeffs(c, (x_min, x_max))
+    T = build_tridiag_toep(c, lower, main, upper)
+    V = build_diagonal_qtt_from_vec_qtt(qtt_quadratic_1d(c; interval=(x_min, x_max)))
+    H = T + V
+end
+
 function qtt(;
     c::Int = 10,
     x_min::Float64 = -50.0,
@@ -315,10 +323,7 @@ function qtt(;
     tci_maxbonddim::Int = 64,
     tci_maxiter::Int = 100,
 )
-    lower, main, upper, _ = kinetic_fd_coeffs(c, (x_min, x_max))
-    a1 = build_tridiag_toep(c, lower, main, upper)
-    a2 = build_diagonal_qtt_from_vec_qtt(qtt_quadratic_1d(c; interval=(x_min, x_max)))
-    a = a1 + a2
+    H = H_qtt(c, x_min, x_max)
 
     phi_qtt = build_qtt_vec_exp_tci(
         c;
